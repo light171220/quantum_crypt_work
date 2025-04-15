@@ -5,6 +5,7 @@ from qiskit.visualization import circuit_drawer
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 def optimized_s_box_4bit(circuit, qubits):
     circuit.swap(qubits[1], qubits[2])
     circuit.swap(qubits[0], qubits[3])
@@ -308,7 +309,7 @@ def encrypt_spn(plaintext, key):
     
     circuit.measure(data_register, classical_register)
     
-    simulator = AerSimulator()
+    simulator = AerSimulator(method='matrix_product_state')
     job = simulator.run(circuit, shots=1024)
     result = job.result()
     counts = result.get_counts()
@@ -330,10 +331,6 @@ def decrypt_spn(ciphertext, key):
     for i in range(16):
         if key[i] == '1':
             circuit.x(key_register[i])
-    
-    key_expansion1 = key_expansion(QuantumCircuit(key_register), key_register, "10000000")
-    temp_key = key_register.copy()
-    key_expansion2 = key_expansion(key_expansion1, temp_key, "00110000")
     
     circuit = add_round_key(circuit, data_register, key_register)
     
@@ -364,7 +361,7 @@ def decrypt_spn(ciphertext, key):
     
     circuit.measure(data_register, classical_register)
     
-    simulator = AerSimulator()
+    simulator = AerSimulator(method='matrix_product_state')
     job = simulator.run(circuit, shots=1024)
     result = job.result()
     counts = result.get_counts()
@@ -397,7 +394,7 @@ def run_grover_attack(plaintext, ciphertext, num_iterations=1):
 
     circuit.measure(key_register, classical_register)
     
-    simulator = AerSimulator()
+    simulator = AerSimulator(method='matrix_product_state')
     job = simulator.run(circuit, shots=1024)
     result = job.result()
     counts = result.get_counts()

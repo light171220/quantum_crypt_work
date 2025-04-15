@@ -1,285 +1,323 @@
+import numpy as np
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit_aer import AerSimulator
-from qiskit.visualization import circuit_drawer
-import matplotlib.pyplot as plt
+import random
+import csv
+import json
 
-def mix_columns(circuit, qubits):
-    # Mix 4 columns, each column has 8 bits (2 from each row)
-    for col in range(4):
-        col_start = col * 2
-        
-        # Mix first row with second
-        circuit.cx(qubits[col_start], qubits[8+col_start])
-        circuit.cx(qubits[col_start+1], qubits[8+col_start+1])
-        
-        # Mix second row with third
-        circuit.cx(qubits[8+col_start], qubits[16+col_start])
-        circuit.cx(qubits[8+col_start+1], qubits[16+col_start+1])
-        
-        # Mix third row with fourth
-        circuit.cx(qubits[16+col_start], qubits[24+col_start])
-        circuit.cx(qubits[16+col_start+1], qubits[24+col_start+1])
-        
-        # Mix fourth row with first (forming a cycle)
-        circuit.cx(qubits[24+col_start], qubits[col_start])
-        circuit.cx(qubits[24+col_start+1], qubits[col_start+1])
-        
-        # Additional mixing for diffusion
-        circuit.cx(qubits[col_start], qubits[16+col_start])
-        circuit.cx(qubits[8+col_start], qubits[24+col_start])
+class MixColumnsQuantumCircuitRL:
+    def __init__(self, input_state, gate_config):
+        self.input_state = input_state
+        self.gate_config = gate_config
     
-    return circuit
-
-def inverse_mix_columns(circuit, qubits):
-    # Inverse of mix_columns (operations in reverse order)
-    for col in range(3, -1, -1):
-        col_start = col * 2
-        
-        # Undo additional mixing
-        circuit.cx(qubits[8+col_start], qubits[24+col_start])
-        circuit.cx(qubits[col_start], qubits[16+col_start])
-        
-        # Undo cyclic mixing
-        circuit.cx(qubits[24+col_start+1], qubits[col_start+1])
-        circuit.cx(qubits[24+col_start], qubits[col_start])
-        circuit.cx(qubits[16+col_start+1], qubits[24+col_start+1])
-        circuit.cx(qubits[16+col_start], qubits[24+col_start])
-        circuit.cx(qubits[8+col_start+1], qubits[16+col_start+1])
-        circuit.cx(qubits[8+col_start], qubits[16+col_start])
-        circuit.cx(qubits[col_start+1], qubits[8+col_start+1])
-        circuit.cx(qubits[col_start], qubits[8+col_start])
-    
-    return circuit
-
-def corrected_classical_mix_columns(input_bits):
-    # Convert input string to list of bit values
-    bits = [int(bit) for bit in input_bits]
-    result = bits.copy()
-    
-    # Apply mix columns to each column
-    for col in range(4):
-        col_start = col * 2
-        
-        # Store original values to avoid overwriting during XOR operations
-        original = bits.copy()
-        
-        # Mix first row with second
-        result[8+col_start] = result[8+col_start] ^ original[col_start]
-        result[8+col_start+1] = result[8+col_start+1] ^ original[col_start+1]
-        
-        # Mix second row with third
-        result[16+col_start] = result[16+col_start] ^ original[8+col_start]
-        result[16+col_start+1] = result[16+col_start+1] ^ original[8+col_start+1]
-        
-        # Mix third row with fourth
-        result[24+col_start] = result[24+col_start] ^ original[16+col_start]
-        result[24+col_start+1] = result[24+col_start+1] ^ original[16+col_start+1]
-        
-        # Mix fourth row with first (forming a cycle)
-        result[col_start] = result[col_start] ^ original[24+col_start]
-        result[col_start+1] = result[col_start+1] ^ original[24+col_start+1]
-        
-        # Additional mixing for diffusion
-        result[16+col_start] = result[16+col_start] ^ original[col_start]
-        result[24+col_start] = result[24+col_start] ^ original[8+col_start]
-    
-    # Convert back to string
-    return ''.join(str(bit) for bit in result)
-
-def verify_mix_columns():
-    test_cases = [
-        "00000000000000000000000000000000",
-        "11111111111111111111111111111111",
-        "10101010101010101010101010101010",
-        "01010101010101010101010101010101",
-        "00001111000011110000111100001111",
-        "11110000111100001111000011110000",
-        "00110011001100110011001100110011",
-        "11001100110011001100110011001100"
-    ]
-    
-    print("Verifying MixColumns implementation:")
-    correct_count = 0
-    total_tests = len(test_cases)
-    
-    for input_bits in test_cases:
-        # Calculate expected output using corrected classical function
-        expected_output = corrected_classical_mix_columns(input_bits)
-        
+    def create_quantum_circuit(self):
         # Create quantum circuit
-        qr = QuantumRegister(32, 'q')
+        qr = QuantumRegister(32, 'b')
         cr = ClassicalRegister(32, 'c')
         circuit = QuantumCircuit(qr, cr)
         
-        # Set input state
-        for i in range(32):
-            if input_bits[i] == '1':
+        # Initialize state
+        binary_state = [int(b) for b in f'{self.input_state:032b}']
+        for i, bit in enumerate(reversed(binary_state)):
+            if bit:
                 circuit.x(qr[i])
         
-        # Apply Mix Columns
-        circuit = mix_columns(circuit, qr)
-        
-        # Measure
-        circuit.measure(qr, cr)
-        
-        # Simulate
-        simulator = AerSimulator()
-        job = simulator.run(circuit, shots=10000)
-        result = job.result()
-        counts = result.get_counts()
-        
-        # Get most frequent result
-        output = max(counts, key=counts.get)
-        output_ordered = ''.join(reversed(output))
-        
-        # Compare with expected
-        if output_ordered == expected_output:
-            correct_count += 1
-            print(f"✓ Input: {input_bits[:8]}... -> Output matches expected")
-        else:
-            print(f"✗ Input: {input_bits[:8]}... -> Output doesn't match")
-            print(f"  Got:      {output_ordered[:16]}...")
-            print(f"  Expected: {expected_output[:16]}...")
+        # Apply gates based on configuration
+        used_qubits = set()
+        for gate_info in self.gate_config:
+            gate_type, q1, q2, q3 = gate_info
             
-            # Debug: print detailed comparison
-            print("  Detailed comparison (first 16 bits):")
-            for i in range(16):
-                match = "✓" if output_ordered[i] == expected_output[i] else "✗"
-                print(f"    Bit {i}: Got {output_ordered[i]}, Expected {expected_output[i]} {match}")
-    
-    accuracy = (correct_count / total_tests) * 100
-    print(f"\nResults: {correct_count}/{total_tests} correct ({accuracy:.2f}%)")
-    
-    return correct_count, total_tests, accuracy
-
-def verify_inverse_property():
-    test_cases = [
-        "00000000000000000000000000000000",
-        "11111111111111111111111111111111",
-        "10101010101010101010101010101010",
-        "01010101010101010101010101010101",
-        "00001111000011110000111100001111"
-    ]
-    
-    print("\nVerifying MixColumns Inverse Property:")
-    correct_count = 0
-    total_tests = len(test_cases)
-    
-    for input_bits in test_cases:
-        # Create quantum circuit
-        qr = QuantumRegister(32, 'q')
-        cr = ClassicalRegister(32, 'c')
-        circuit = QuantumCircuit(qr, cr)
-        
-        # Set input state
-        for i in range(32):
-            if input_bits[i] == '1':
-                circuit.x(qr[i])
-        
-        # Apply Mix Columns followed by Inverse Mix Columns
-        circuit = mix_columns(circuit, qr)
-        circuit = inverse_mix_columns(circuit, qr)
+            # Ensure unique qubits
+            def get_unique_qubits(num_qubits):
+                available_qubits = [q for q in range(32) if q not in used_qubits]
+                if len(available_qubits) < num_qubits:
+                    available_qubits = list(range(32))
+                
+                selected_qubits = random.sample(available_qubits, num_qubits)
+                used_qubits.update(selected_qubits)
+                return selected_qubits
+            
+            if gate_type == 'cx':
+                q1, q2 = get_unique_qubits(2)
+                circuit.cx(qr[q1], qr[q2])
+            elif gate_type == 'ccx':
+                q1, q2, q3 = get_unique_qubits(3)
+                circuit.ccx(qr[q1], qr[q2], qr[q3])
+            elif gate_type == 'swap':
+                q1, q2 = get_unique_qubits(2)
+                circuit.swap(qr[q1], qr[q2])
         
         # Measure
         circuit.measure(qr, cr)
         
-        # Simulate
-        simulator = AerSimulator()
-        job = simulator.run(circuit, shots=10000)
+        return circuit
+
+def classical_mix_columns(state):
+    b0, b1, b2, b3 = (
+        (state >> 24) & 0xFF, 
+        (state >> 16) & 0xFF, 
+        (state >> 8) & 0xFF, 
+        state & 0xFF
+    )
+    
+    new_b0 = b0 ^ b2
+    new_b1 = b1 ^ b0 ^ b2
+    new_b2 = b2 ^ b1
+    new_b3 = b3
+    
+    return (new_b0 << 24) | (new_b1 << 16) | (new_b2 << 8) | new_b3
+
+class QuantumCircuitEvolutionAgent:
+    def __init__(self, population_size=30, mutation_rate=0.2, max_gates=10):
+        self.population_size = population_size
+        self.mutation_rate = mutation_rate
+        self.max_gates = max_gates
+        self.population = self._initialize_population()
+        self.simulator = AerSimulator(method='matrix_product_state')
+    
+    def _generate_random_circuit_config(self):
+        num_gates = random.randint(3, self.max_gates)
+        circuit_config = []
+        
+        for _ in range(num_gates):
+            gate_type = random.choice(['cx', 'ccx', 'swap'])
+            
+            if gate_type == 'cx':
+                q1, q2 = random.sample(range(32), 2)
+                circuit_config.append([gate_type, q1, q2, 0])
+            elif gate_type == 'ccx':
+                q1, q2, q3 = random.sample(range(32), 3)
+                circuit_config.append([gate_type, q1, q2, q3])
+            elif gate_type == 'swap':
+                q1, q2 = random.sample(range(32), 2)
+                circuit_config.append([gate_type, q1, q2, 0])
+        
+        return circuit_config
+    
+    def _initialize_population(self):
+        return [self._generate_random_circuit_config() 
+                for _ in range(self.population_size)]
+    
+    def fitness_evaluation(self, test_vectors):
+        fitness_scores = []
+        
+        for circuit_config in self.population:
+            passed_tests = 0
+            total_tests = len(test_vectors)
+            
+            for input_state, classical_output in test_vectors:
+                # Create quantum circuit
+                qc_instance = MixColumnsQuantumCircuitRL(input_state, circuit_config)
+                circuit = qc_instance.create_quantum_circuit()
+                
+                # Run simulation with fewer shots to reduce memory
+                job = self.simulator.run(circuit, shots=1)
+                result = job.result()
+                counts = result.get_counts()
+                
+                # Get measured state
+                measured_state = list(counts.keys())[0]
+                quantum_output = int(measured_state[::-1], 2)
+                
+                if quantum_output == classical_output:
+                    passed_tests += 1
+            
+            fitness = passed_tests / total_tests
+            fitness_scores.append(fitness)
+        
+        return fitness_scores
+    
+    def selection(self, fitness_scores):
+        # Tournament selection
+        selected = []
+        for _ in range(self.population_size):
+            tournament = random.sample(range(len(self.population)), 5)
+            winner = max(tournament, key=lambda i: fitness_scores[i])
+            selected.append(self.population[winner])
+        return selected
+    
+    def crossover(self, selected_population):
+        new_population = []
+        for _ in range(self.population_size):
+            parent1, parent2 = random.sample(selected_population, 2)
+            
+            # Uniform crossover
+            child = []
+            for p1_gate, p2_gate in zip(parent1, parent2):
+                child.append(p1_gate if random.random() < 0.5 else p2_gate)
+            
+            new_population.append(child)
+        
+        return new_population
+    
+    def mutation(self, population):
+        mutated_population = []
+        
+        for circuit_config in population:
+            mutated_config = [gate.copy() for gate in circuit_config]
+            
+            for i in range(len(mutated_config)):
+                if random.random() < self.mutation_rate:
+                    gate_type = random.choice(['cx', 'ccx', 'swap'])
+                    
+                    if gate_type == 'cx':
+                        q1, q2 = random.sample(range(32), 2)
+                        mutated_config[i] = [gate_type, q1, q2, 0]
+                    elif gate_type == 'ccx':
+                        q1, q2, q3 = random.sample(range(32), 3)
+                        mutated_config[i] = [gate_type, q1, q2, q3]
+                    elif gate_type == 'swap':
+                        q1, q2 = random.sample(range(32), 2)
+                        mutated_config[i] = [gate_type, q1, q2, 0]
+            
+            mutated_population.append(mutated_config)
+        
+        return mutated_population
+    
+    def evolve(self, test_vectors, generations=30):
+        best_fitness = 0
+        best_circuit_config = None
+        
+        for generation in range(generations):
+            # Fitness evaluation
+            fitness_scores = self.fitness_evaluation(test_vectors)
+            
+            # Track best circuit configuration
+            current_best_fitness = max(fitness_scores)
+            if current_best_fitness > best_fitness:
+                best_fitness = current_best_fitness
+                best_circuit_config = self.population[fitness_scores.index(current_best_fitness)]
+            
+            # Print generation progress
+            print(f"Generation {generation + 1}: Best Fitness = {best_fitness:.4f}")
+            
+            # Selection
+            selected_population = self.selection(fitness_scores)
+            
+            # Crossover
+            population = self.crossover(selected_population)
+            
+            # Mutation
+            population = self.mutation(population)
+            
+            # Update population
+            self.population = population
+        
+        return best_circuit_config, best_fitness
+
+def generate_comprehensive_test_vectors():
+    test_vectors = []
+    
+    bit_patterns = [0x00, 0x01, 0x10, 0x11, 0x55, 0xAA, 0x0F, 0xF0, 0xFF]
+    
+    # Generate combinations
+    for b0 in bit_patterns:
+        for b1 in bit_patterns:
+            for b2 in bit_patterns:
+                for b3 in bit_patterns:
+                    state = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+                    result = classical_mix_columns(state)
+                    test_vectors.append((state, result))
+    
+    # Random states
+    for _ in range(5000):
+        state = random.getrandbits(32)
+        result = classical_mix_columns(state)
+        test_vectors.append((state, result))
+    
+    # Edge cases
+    edge_cases = [
+        0x00000000, 0xFFFFFFFF, 0x55555555, 0xAAAAAAAA,
+        0x0F0F0F0F, 0xF0F0F0F0, 0x00FF00FF, 0xFF00FF00,
+        0x12345678, 0x87654321, 0xDEADBEEF, 0xC0FFEEEE
+    ]
+    
+    for case in edge_cases:
+        result = classical_mix_columns(case)
+        test_vectors.append((case, result))
+    
+    # Remove duplicates
+    unique_test_vectors = []
+    seen = set()
+    for vec in test_vectors:
+        if vec not in seen:
+            unique_test_vectors.append(vec)
+            seen.add(vec)
+    
+    return unique_test_vectors
+
+def test_best_quantum_circuit(test_vectors, best_circuit_config):
+    print("Quantum Mix Columns Circuit Testing:")
+    print("-" * 50)
+    
+    total_tests = len(test_vectors)
+    passed_tests = 0
+    failed_tests = []
+    simulator = AerSimulator(method='matrix_product_state')
+    
+    for input_state, classical_output in test_vectors:
+        # Create quantum circuit
+        qc_instance = MixColumnsQuantumCircuitRL(input_state, best_circuit_config)
+        circuit = qc_instance.create_quantum_circuit()
+        
+        # Run simulation
+        job = simulator.run(circuit, shots=1)
         result = job.result()
         counts = result.get_counts()
         
-        # Get most frequent result
-        output = max(counts, key=counts.get)
-        output_ordered = ''.join(reversed(output))
+        # Get measured state
+        measured_state = list(counts.keys())[0]
+        quantum_output = int(measured_state[::-1], 2)
         
-        # Check if output matches input (should be identity operation)
-        if output_ordered == input_bits:
-            correct_count += 1
-            print(f"✓ Input: {input_bits[:8]}... -> Output after inverse matches input")
+        if quantum_output == classical_output:
+            passed_tests += 1
         else:
-            print(f"✗ Input: {input_bits[:8]}... -> Output after inverse doesn't match input")
-            print(f"  Got:      {output_ordered[:16]}...")
-            print(f"  Expected: {input_bits[:16]}...")
+            failed_tests.append({
+                'input': input_state,
+                'classical_output': classical_output,
+                'quantum_output': quantum_output
+            })
     
-    accuracy = (correct_count / total_tests) * 100
-    print(f"\nInverse Property Results: {correct_count}/{total_tests} correct ({accuracy:.2f}%)")
+    print("-" * 50)
+    print(f"Test Summary:")
+    print(f"Total Tests:  {total_tests}")
+    print(f"Passed Tests: {passed_tests}")
+    print(f"Failed Tests: {len(failed_tests)}")
+    print(f"Success Rate: {passed_tests/total_tests*100:.2f}%")
     
-    return correct_count, total_tests, accuracy
-
-def analyze_diffusion():
-    print("\nAnalyzing diffusion properties of MixColumns:")
+    if failed_tests:
+        with open('failed_mix_columns_tests.csv', 'w', newline='') as csvfile:
+            fieldnames = ['Input (Hex)', 'Classical Output (Hex)', 'Quantum Output (Hex)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            for test in failed_tests[:100]:
+                writer.writerow({
+                    'Input (Hex)': f'0x{test["input"]:08X}',
+                    'Classical Output (Hex)': f'0x{test["classical_output"]:08X}',
+                    'Quantum Output (Hex)': f'0x{test["quantum_output"]:08X}'
+                })
+        print(f"\nFirst 100 failed tests saved to 'failed_mix_columns_tests.csv'")
     
-    # Test with inputs that have only a single bit set
-    for bit_pos in range(0, 32, 4):  # Sample positions
-        input_bits = ['0'] * 32
-        input_bits[bit_pos] = '1'
-        input_str = ''.join(input_bits)
-        
-        output_str = corrected_classical_mix_columns(input_str)
-        
-        # Count number of bits affected
-        bits_changed = sum(1 for i in range(32) if output_str[i] == '1')
-        
-        print(f"Setting bit {bit_pos} affects {bits_changed} bits in the output")
-        
-        # Show which bits were affected
-        affected_positions = [i for i in range(32) if output_str[i] == '1']
-        print(f"  Affected positions: {affected_positions}")
-
-def draw_mixcolumns_circuit():
-    # Create circuit for one column only (for clarity)
-    qr = QuantumRegister(32, 'q')
-    circuit = QuantumCircuit(qr)
+    # Save best circuit configuration
+    with open('best_circuit_config.json', 'w') as f:
+        json.dump(best_circuit_config, f)
     
-    # Just show one column operation
-    col = 0
-    col_start = col * 2
-    
-    # Mix first row with second
-    circuit.cx(qr[col_start], qr[8+col_start])
-    circuit.cx(qr[col_start+1], qr[8+col_start+1])
-    
-    # Mix second row with third
-    circuit.cx(qr[8+col_start], qr[16+col_start])
-    circuit.cx(qr[8+col_start+1], qr[16+col_start+1])
-    
-    # Mix third row with fourth
-    circuit.cx(qr[16+col_start], qr[24+col_start])
-    circuit.cx(qr[16+col_start+1], qr[24+col_start+1])
-    
-    # Mix fourth row with first
-    circuit.cx(qr[24+col_start], qr[col_start])
-    circuit.cx(qr[24+col_start+1], qr[col_start+1])
-    
-    # Additional mixing for diffusion
-    circuit.cx(qr[col_start], qr[16+col_start])
-    circuit.cx(qr[8+col_start], qr[24+col_start])
-    
-    # Draw the circuit
-    circuit_drawing = circuit_drawer(circuit, output='mpl', style={'name': 'bw'})
-    plt.title("MixColumns Circuit (Single Column)", fontsize=16)
-    plt.tight_layout()
-    plt.savefig('mixcolumns_circuit.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print("MixColumns circuit diagram saved as 'mixcolumns_circuit.png'")
-    
-    # Draw full circuit (all columns)
-    qr_full = QuantumRegister(32, 'q')
-    circuit_full = QuantumCircuit(qr_full)
-    circuit_full = mix_columns(circuit_full, qr_full)
-    
-    circuit_drawing = circuit_drawer(circuit_full, output='mpl', style={'name': 'bw'})
-    plt.title("MixColumns Full Circuit", fontsize=16)
-    plt.tight_layout()
-    plt.savefig('mixcolumns_full_circuit.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print("Full MixColumns circuit diagram saved as 'mixcolumns_full_circuit.png'")
+    return passed_tests, total_tests
 
 if __name__ == "__main__":
-    verify_mix_columns()
-    verify_inverse_property()
-    analyze_diffusion()
-    draw_mixcolumns_circuit()
+    # Generate test vectors
+    test_vectors = generate_comprehensive_test_vectors()
+    
+    # Initialize Evolutionary Agent
+    agent = QuantumCircuitEvolutionAgent(
+        population_size=30, 
+        mutation_rate=0.2, 
+        max_gates=10
+    )
+    
+    # Evolve the best quantum circuit configuration
+    best_circuit_config, best_fitness = agent.evolve(test_vectors, generations=30)
+    
+    # Test the best quantum circuit
+    passed_tests, total_tests = test_best_quantum_circuit(test_vectors, best_circuit_config)
