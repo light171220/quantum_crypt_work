@@ -314,8 +314,8 @@ def run_iterations(plaintext, ciphertext, max_iterations=12, shots=4096):
 
 if __name__ == "__main__":
     plaintext = '11011011'
-    ciphertext = '01000100'
-    max_iterations = 12
+    ciphertext = '01011101'
+    max_iterations = 6
     shots = 4096  # Increased number of shots for better statistics
     
     results = run_iterations(plaintext, ciphertext, max_iterations, shots)

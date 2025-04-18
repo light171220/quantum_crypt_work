@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./spn_16_bit/test_"
+    ]
+}

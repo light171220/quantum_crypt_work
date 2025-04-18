@@ -798,7 +798,7 @@ int main() {
     std::vector<std::tuple<int, double, int, int>> parameter_sets = {
         {400, 0.25, 100, 50000},
         {150, 0.2, 150, 50000},
-        {200, 0.3, 200, 500000}
+        {200, 0.3, 200, 50000}
     };
     
     for (const auto& params : parameter_sets) {
