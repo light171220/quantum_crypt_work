@@ -99,100 +99,71 @@ def inverse_final_permutation(circuit, qubits):
     
     return circuit
 
-def key_schedule(circuit, key_qubits, round_num, aux_qubits):
+def key_schedule(circuit, key_qubits, target_qubits, expansion_indices, round_num):
     p10_to_p8_table = [0, 1, 3, 4, 5, 7, 8, 9]
     shift = 1 if round_num == 1 else 3
     
     for i in range(8):
-        src_idx = (p10_to_p8_table[i] + shift) % 10
-        circuit.cx(key_qubits[src_idx], aux_qubits[i])
+        key_idx = (p10_to_p8_table[i] + shift) % 10
+        circuit.cx(key_qubits[key_idx], target_qubits[expansion_indices[i]])
     
     return circuit
 
-def inverse_key_schedule(circuit, key_qubits, round_num, aux_qubits):
+def inverse_key_schedule(circuit, key_qubits, target_qubits, expansion_indices, round_num):
     p10_to_p8_table = [0, 1, 3, 4, 5, 7, 8, 9]
     shift = 1 if round_num == 1 else 3
     
     for i in range(7, -1, -1):
-        src_idx = (p10_to_p8_table[i] + shift) % 10
-        circuit.cx(key_qubits[src_idx], aux_qubits[i])
+        key_idx = (p10_to_p8_table[i] + shift) % 10
+        circuit.cx(key_qubits[key_idx], target_qubits[expansion_indices[i]])
     
     return circuit
 
-def feistel_function(circuit, plaintext_qubits, key_qubits, aux_qubits, round_num):
+def feistel_function(circuit, plaintext_qubits, key_qubits, round_num):
     left_half = plaintext_qubits[0:4]
     right_half = plaintext_qubits[4:8]
-    
     expansion_table = [3, 0, 1, 2, 1, 2, 3, 0]
     
-    for i in range(8):
-        circuit.cx(right_half[expansion_table[i]], aux_qubits[i])
+    circuit = key_schedule(circuit, key_qubits, right_half, expansion_table, round_num)
     
-    circuit = key_schedule(circuit, key_qubits, round_num, aux_qubits)
-    
-    s0_qubits = aux_qubits[0:4]
-    s1_qubits = aux_qubits[4:8]
-    
-    circuit = s0_box_circuit(circuit, s0_qubits)
-    circuit = s1_box_circuit(circuit, s1_qubits)
+    circuit = s0_box_circuit(circuit, right_half[0:4])
+    circuit = s1_box_circuit(circuit, right_half[4:8])
     
     p4_table = [1, 3, 2, 0]
     for i in range(4):
-        idx = p4_table[i]
-        if idx < 2:
-            circuit.cx(s0_qubits[idx], left_half[i])
+        if i < 2:
+            circuit.cx(right_half[i], left_half[p4_table[i]])
         else:
-            circuit.cx(s1_qubits[idx-2], left_half[i])
+            circuit.cx(right_half[i+4], left_half[p4_table[i]])
     
-    circuit = inverse_s1_box_circuit(circuit, s1_qubits)
-    circuit = inverse_s0_box_circuit(circuit, s0_qubits)
+    circuit = inverse_s1_box_circuit(circuit, right_half[4:8])
+    circuit = inverse_s0_box_circuit(circuit, right_half[0:4])
     
-    circuit = inverse_key_schedule(circuit, key_qubits, round_num, aux_qubits)
-    
-    for i in range(7, -1, -1):
-        circuit.cx(right_half[expansion_table[i]], aux_qubits[i])
+    circuit = inverse_key_schedule(circuit, key_qubits, right_half, expansion_table, round_num)
     
     return circuit
 
-def inverse_feistel_function(circuit, plaintext_qubits, key_qubits, aux_qubits, round_num):
+def inverse_feistel_function(circuit, plaintext_qubits, key_qubits, round_num):
     left_half = plaintext_qubits[0:4]
     right_half = plaintext_qubits[4:8]
-    
     expansion_table = [3, 0, 1, 2, 1, 2, 3, 0]
+    
+    circuit = key_schedule(circuit, key_qubits, right_half, expansion_table, round_num)
+    
+    circuit = s0_box_circuit(circuit, right_half[0:4])
+    circuit = s1_box_circuit(circuit, right_half[4:8])
+    
     p4_table = [1, 3, 2, 0]
-    
-    # Step 1: Undo the expansion XOR operations (in reverse order)
-    for i in range(7, -1, -1):
-        circuit.cx(right_half[expansion_table[i]], aux_qubits[i])
-    
-    # Step 2: Apply the key schedule (note: not inverse since we're uncomputing)
-    circuit = key_schedule(circuit, key_qubits, round_num, aux_qubits)
-    
-    # Step 3: Apply S-boxes (we use the forward S-boxes as we're working backwards)
-    s0_qubits = aux_qubits[0:4]
-    s1_qubits = aux_qubits[4:8]
-    
-    circuit = s0_box_circuit(circuit, s0_qubits)
-    circuit = s1_box_circuit(circuit, s1_qubits)
-    
-    # Step 4: Undo the P4 XOR operations with left half (in reverse order)
     for i in range(3, -1, -1):
-        idx = p4_table[i]
-        if idx < 2:
-            circuit.cx(s0_qubits[idx], left_half[i])
+        if i < 2:
+            circuit.cx(right_half[i], left_half[p4_table[i]])
         else:
-            circuit.cx(s1_qubits[idx-2], left_half[i])
+            circuit.cx(right_half[i+4], left_half[p4_table[i]])
     
-    # Step 5: Undo S-box operations to restore aux qubits
-    circuit = inverse_s1_box_circuit(circuit, s1_qubits)
-    circuit = inverse_s0_box_circuit(circuit, s0_qubits)
+    circuit = inverse_s1_box_circuit(circuit, right_half[4:8])
+    circuit = inverse_s0_box_circuit(circuit, right_half[0:4])
     
-    # Step 6: Undo key schedule to restore aux qubits
-    circuit = inverse_key_schedule(circuit, key_qubits, round_num, aux_qubits)
-    
-    # Step 7: Undo expansion operation to fully restore aux qubits
-    for i in range(7, -1, -1):
-        circuit.cx(right_half[expansion_table[i]], aux_qubits[i])
+    circuit = inverse_key_schedule(circuit, key_qubits, right_half, expansion_table, round_num)
     
     return circuit
 
@@ -201,17 +172,17 @@ def swap_halves(circuit, qubits):
         circuit.swap(qubits[i], qubits[i+4])
     return circuit
 
-def encrypt_sdes(circuit, plaintext_qubits, key_qubits, aux_qubits):
+def encrypt_sdes(circuit, plaintext_qubits, key_qubits):
     circuit = initial_permutation(circuit, plaintext_qubits)
     circuit.barrier()
     
-    circuit = feistel_function(circuit, plaintext_qubits, key_qubits, aux_qubits, 1)
+    circuit = feistel_function(circuit, plaintext_qubits, key_qubits, 1)
     circuit.barrier()
     
     circuit = swap_halves(circuit, plaintext_qubits)
     circuit.barrier()
     
-    circuit = feistel_function(circuit, plaintext_qubits, key_qubits, aux_qubits, 2)
+    circuit = feistel_function(circuit, plaintext_qubits, key_qubits, 2)
     circuit.barrier()
     
     circuit = final_permutation(circuit, plaintext_qubits)
@@ -219,17 +190,17 @@ def encrypt_sdes(circuit, plaintext_qubits, key_qubits, aux_qubits):
     
     return circuit
 
-def inverse_sdes(circuit, plaintext_qubits, key_qubits, aux_qubits):
+def inverse_sdes(circuit, plaintext_qubits, key_qubits):
     circuit = inverse_final_permutation(circuit, plaintext_qubits)
     circuit.barrier()
     
-    circuit = inverse_feistel_function(circuit, plaintext_qubits, key_qubits, aux_qubits, 2)
+    circuit = inverse_feistel_function(circuit, plaintext_qubits, key_qubits, 2)
     circuit.barrier()
     
     circuit = swap_halves(circuit, plaintext_qubits)
     circuit.barrier()
     
-    circuit = inverse_feistel_function(circuit, plaintext_qubits, key_qubits, aux_qubits, 1)
+    circuit = inverse_feistel_function(circuit, plaintext_qubits, key_qubits, 1)
     circuit.barrier()
     
     circuit = inverse_initial_permutation(circuit, plaintext_qubits)
@@ -237,8 +208,8 @@ def inverse_sdes(circuit, plaintext_qubits, key_qubits, aux_qubits):
     
     return circuit
 
-def oracle_function(circuit, plaintext_qubits, key_qubits, aux_qubits, target_qubit, ciphertext):
-    circuit = encrypt_sdes(circuit, plaintext_qubits, key_qubits, aux_qubits)
+def oracle_function(circuit, plaintext_qubits, key_qubits, target_qubit, ciphertext):
+    circuit = encrypt_sdes(circuit, plaintext_qubits, key_qubits)
     
     for i in range(8):
         if ciphertext[i] == '0':
@@ -253,7 +224,7 @@ def oracle_function(circuit, plaintext_qubits, key_qubits, aux_qubits, target_qu
         if ciphertext[i] == '0':
             circuit.x(plaintext_qubits[i])
     
-    circuit = inverse_sdes(circuit, plaintext_qubits, key_qubits, aux_qubits)
+    circuit = inverse_sdes(circuit, plaintext_qubits, key_qubits)
     
     return circuit
 
@@ -287,11 +258,10 @@ def grover_sdes(plaintext_value, ciphertext_value, iterations=2):
     
     plaintext = QuantumRegister(8, 'pt')
     key = QuantumRegister(10, 'key') 
-    aux = QuantumRegister(8, 'aux')
     target = QuantumRegister(1, 'target')
     cr = ClassicalRegister(10, 'cr')
     
-    circuit = QuantumCircuit(plaintext, key, aux, target, cr)
+    circuit = QuantumCircuit(plaintext, key, target, cr)
     
     for i in range(8):
         if plaintext_binary[i] == '1':
@@ -304,7 +274,7 @@ def grover_sdes(plaintext_value, ciphertext_value, iterations=2):
     circuit.h(target)
     
     for _ in range(iterations):
-        circuit = oracle_function(circuit, plaintext, key, aux, target[0], ciphertext_binary)
+        circuit = oracle_function(circuit, plaintext, key, target[0], ciphertext_binary)
         circuit = diffusion(circuit, key)
     
     circuit.measure(key, cr)
@@ -330,7 +300,7 @@ def run_grover(plaintext_val, ciphertext_val, iterations=2, shots=1024):
     plot_histogram(sorted_counts, title=f'Grover Results: Iterations={iterations}, Plaintext={plaintext_binary}, Ciphertext={ciphertext_binary}')
     plt.tight_layout()
     plt.savefig(f'grover_results_iter{iterations}.png')
-    # plt.show()
+    plt.show()
     
     top_key = max(counts, key=counts.get)
     
@@ -344,12 +314,8 @@ def test_sdes_grover():
     plaintext_val = 0b01010100
     ciphertext_val = 0b11100111
     
-    global p10_to_p8_table, shift
-    p10_to_p8_table = [0, 1, 3, 4, 5, 7, 8, 9]
-    shift = 0
-    
-    print("Running Grover's algorithm with 1 iterations:")
-    counts = run_grover(plaintext_val, ciphertext_val, iterations=1, shots=1024)
+    print("Running Grover's algorithm (3 iterations):")
+    counts = run_grover(plaintext_val, ciphertext_val, iterations=3, shots=1024)
     
     print("\nRunning with 5 iterations:")
     counts = run_grover(plaintext_val, ciphertext_val, iterations=5, shots=1024)

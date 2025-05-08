@@ -1,287 +1,117 @@
-from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
-from qiskit_aer import AerSimulator
-from qiskit.visualization import plot_histogram
-from qiskit.circuit.library import MCXGate
-import matplotlib.pyplot as plt
+def permute(bits, pattern):
+    return [bits[i-1] for i in pattern]
 
-def s0_box_circuit(circuit, qubits):
-    [q0, q1, q2, q3] = qubits
-    
-    circuit.ccx(q0, q2, q3)
-    circuit.ccx(q0, q1, q3)
-    circuit.swap(q1, q3)
-    circuit.x(q2)
-    circuit.ccx(q0, q1, q2)
-    circuit.cx(q3, q1)
-    circuit.cx(q2, q0)
-    
-    return circuit
+def left_shift(bits, n):
+    return bits[n:] + bits[:n]
 
-def s1_box_circuit(circuit, qubits):
-    [q0, q1, q2, q3] = qubits
-    
-    circuit.swap(q3, q1)
-    circuit.cx(q3, q2)
-    circuit.ccx(q1, q2, q3)
-    circuit.swap(q0, q1)
-    circuit.ccx(q1, q2, q3)
-    circuit.ccx(q0, q1, q3)
-    circuit.cx(q1, q3)
-    circuit.ccx(q0, q2, q3)
-    circuit.swap(q1, q3)
-    circuit.swap(q1, q0)
-    circuit.ccx(q0, q1, q2)
-    circuit.cx(q0, q1)
-    circuit.cx(q2, q1)
-    
-    return circuit
+def generate_subkeys(key):
+    p10 = [3, 5, 2, 7, 4, 10, 1, 9, 8, 6]
+    p8 = [6, 3, 7, 4, 8, 5, 10, 9]
+    key_permuted = permute(key, p10)
+    left, right = key_permuted[:5], key_permuted[5:]
+    subkeys = []
+    for shift in [1, 2]:
+        left, right = left_shift(left, shift), left_shift(right, shift)
+        subkeys.append(permute(left + right, p8))
+    return subkeys
 
-def inverse_s0_box_circuit(circuit, qubits):
-    [q0, q1, q2, q3] = qubits
-    
-    circuit.cx(q2, q0)
-    circuit.cx(q3, q1)
-    circuit.ccx(q0, q1, q2)
-    circuit.x(q2)
-    circuit.swap(q1, q3)
-    circuit.ccx(q0, q1, q3)
-    circuit.ccx(q0, q2, q3)
-    
-    return circuit
+def f_function(right, subkey):
+    e_p = [4, 1, 2, 3, 2, 3, 4, 1]
+    p4 = [2, 4, 3, 1]
+    right_expanded = permute(right, e_p)
+    xor_result = [r ^ k for r, k in zip(right_expanded, subkey)]
+    s0 = [
+        [1, 0, 3, 2],
+        [3, 2, 1, 0],
+        [0, 2, 1, 3],
+        [3, 1, 2, 0]
+    ]
+    s1 = [
+        [0, 2, 1, 3],
+        [2, 0, 1, 3],
+        [3, 2, 1, 0],
+        [2, 1, 0, 3]
+    ]
 
-def inverse_s1_box_circuit(circuit, qubits):
-    [q0, q1, q2, q3] = qubits
+    def s_box(bits, box):
+        row = bits[0] * 2 + bits[3]
+        col = bits[1] * 2 + bits[2]
+        return [int(x) for x in f"{box[row][col]:02b}"]
     
-    circuit.cx(q2, q1)
-    circuit.cx(q0, q1)
-    circuit.ccx(q0, q1, q2)
-    circuit.swap(q1, q0)
-    circuit.swap(q1, q3)
-    circuit.ccx(q0, q2, q3)
-    circuit.cx(q1, q3)
-    circuit.ccx(q0, q1, q3)
-    circuit.ccx(q1, q2, q3)
-    circuit.swap(q0, q1)
-    circuit.cx(q3, q2)
-    circuit.swap(q3, q1)
-    
-    return circuit
+    left, right = xor_result[:4], xor_result[4:]
+    sbox_result = s_box(left, s0) + s_box(right, s1)
+    return permute(sbox_result, p4)
 
-def initial_permutation(circuit, qubits):
-    circuit.swap(qubits[0], qubits[7])
-    circuit.swap(qubits[1], qubits[3])
-    circuit.swap(qubits[2], qubits[5])
-    circuit.swap(qubits[4], qubits[6])
+def sdes_encrypt(plaintext, key):
+    ip = [2, 6, 3, 1, 4, 8, 5, 7]
+    ip_inv = [4, 1, 3, 5, 7, 2, 8, 6]
+    subkeys = generate_subkeys(key)
+    bits = permute(plaintext, ip)
     
-    return circuit
+    def fk(bits, subkey):
+        left, right = bits[:4], bits[4:]
+        return [l ^ r for l, r in zip(left, f_function(right, subkey))] + right
+    
+    bits = fk(bits, subkeys[0])
+    bits = bits[4:] + bits[:4]  # SW function (swap)
+    bits = fk(bits, subkeys[1])
+    return permute(bits, ip_inv)
 
-def final_permutation(circuit, qubits):
-    circuit.swap(qubits[4], qubits[6])
-    circuit.swap(qubits[2], qubits[5])
-    circuit.swap(qubits[1], qubits[3])
-    circuit.swap(qubits[0], qubits[7])
+def sdes_decrypt(ciphertext, key):
+    ip = [2, 6, 3, 1, 4, 8, 5, 7]
+    ip_inv = [4, 1, 3, 5, 7, 2, 8, 6]
+    subkeys = generate_subkeys(key)
+    bits = permute(ciphertext, ip)
     
-    return circuit
+    def fk(bits, subkey):
+        left, right = bits[:4], bits[4:]
+        return [l ^ r for l, r in zip(left, f_function(right, subkey))] + right
+    
+    bits = fk(bits, subkeys[1])
+    bits = bits[4:] + bits[:4]
+    bits = fk(bits, subkeys[0])
+    return permute(bits, ip_inv)
 
-def swap_halves(circuit, qubits):
-    for i in range(4):
-        circuit.swap(qubits[i], qubits[i+4])
-    return circuit
+def str_to_bits(s):
+    return [int(bit) for bit in s]
 
-def direct_key_application(circuit, key_qubits, plaintext_qubits, round_num):
-    left_half = plaintext_qubits[0:4]
-    right_half = plaintext_qubits[4:8]
-    
-    if round_num == 1:
-        key_to_right_half = {
-            0: {5: 3, 0: 0, 6: 1, 1: 2},
-            1: {5: 1, 0: 2, 6: 3, 1: 0},
-            2: {9: 3, 3: 0, 8: 1, 7: 2},
-            3: {9: 1, 3: 2, 8: 3, 7: 0}
-        }
-    else:
-        key_to_right_half = {
-            0: {0: 3, 6: 0, 1: 1, 9: 2},
-            1: {0: 1, 6: 2, 1: 3, 9: 0},
-            2: {3: 3, 8: 0, 7: 1, 2: 2},
-            3: {3: 1, 8: 2, 7: 3, 2: 0}
-        }
-    
-    for left_idx, key_map in key_to_right_half.items():
-        for key_idx, right_idx in key_map.items():
-            circuit.cx(key_qubits[key_idx], plaintext_qubits[4+right_idx])
-            circuit.cx(plaintext_qubits[4+right_idx], left_half[left_idx])
-    
-    return circuit
+def bits_to_str(bits):
+    return ''.join(map(str, bits))
 
-def encrypt_sdes(circuit, plaintext_qubits, key_qubits):
-    circuit = initial_permutation(circuit, plaintext_qubits)
-    circuit.barrier()
-    
-    circuit = direct_key_application(circuit, key_qubits, plaintext_qubits, 1)
-    circuit.barrier()
-    
-    circuit = swap_halves(circuit, plaintext_qubits)
-    circuit.barrier()
-    
-    circuit = direct_key_application(circuit, key_qubits, plaintext_qubits, 2)
-    circuit.barrier()
-    
-    circuit = final_permutation(circuit, plaintext_qubits)
-    circuit.barrier()
-    
-    return circuit
+def validate_binary(s, length):
+    if not all(bit in '01' for bit in s):
+        return False
+    if len(s) != length:
+        return False
+    return True
 
-def inverse_direct_key_application(circuit, key_qubits, plaintext_qubits, round_num):
-    left_half = plaintext_qubits[0:4]
-    right_half = plaintext_qubits[4:8]
+def main():
+    print("=" * 50)
+    print("SIMPLIFIED DES ENCRYPTION AND DECRYPTION")
+    print("=" * 50)
     
-    if round_num == 1:
-        key_to_right_half = {
-            0: {5: 3, 0: 0, 6: 1, 1: 2},
-            1: {5: 1, 0: 2, 6: 3, 1: 0},
-            2: {9: 3, 3: 0, 8: 1, 7: 2},
-            3: {9: 1, 3: 2, 8: 3, 7: 0}
-        }
-    else:
-        key_to_right_half = {
-            0: {0: 3, 6: 0, 1: 1, 9: 2},
-            1: {0: 1, 6: 2, 1: 3, 9: 0},
-            2: {3: 3, 8: 0, 7: 1, 2: 2},
-            3: {3: 1, 8: 2, 7: 3, 2: 0}
-        }
+    while True:
+        plaintext_str = input("Enter 8-bit plaintext (binary): ")
+        if validate_binary(plaintext_str, 8):
+            plaintext = str_to_bits(plaintext_str)
+            break
+        print("Invalid input. Please enter exactly 8 binary digits (0 or 1).")
     
-    for left_idx, key_map in reversed(list(key_to_right_half.items())):
-        for key_idx, right_idx in reversed(list(key_map.items())):
-            circuit.cx(plaintext_qubits[4+right_idx], left_half[left_idx])
-            circuit.cx(key_qubits[key_idx], plaintext_qubits[4+right_idx])
+    while True:
+        key_str = input("Enter 10-bit key (binary): ")
+        if validate_binary(key_str, 10):
+            key = str_to_bits(key_str)
+            break
+        print("Invalid input. Please enter exactly 10 binary digits (0 or 1).")
     
-    return circuit
-
-def inverse_sdes(circuit, plaintext_qubits, key_qubits):
-    circuit = final_permutation(circuit, plaintext_qubits)
-    circuit.barrier()
+    ciphertext = sdes_encrypt(plaintext, key)
+    decrypted = sdes_decrypt(ciphertext, key)
     
-    circuit = inverse_direct_key_application(circuit, key_qubits, plaintext_qubits, 2)
-    circuit.barrier()
-    
-    circuit = swap_halves(circuit, plaintext_qubits)
-    circuit.barrier()
-    
-    circuit = inverse_direct_key_application(circuit, key_qubits, plaintext_qubits, 1)
-    circuit.barrier()
-    
-    circuit = initial_permutation(circuit, plaintext_qubits)
-    circuit.barrier()
-    
-    return circuit
-
-def oracle_function(circuit, plaintext_qubits, key_qubits, target_qubit, ciphertext):
-    circuit = encrypt_sdes(circuit, plaintext_qubits, key_qubits)
-    
-    for i in range(8):
-        if ciphertext[i] == '0':
-            circuit.x(plaintext_qubits[i])
-    
-    gate = MCXGate(8)
-    qubits_list = [plaintext_qubits[i] for i in range(8)]
-    qubits_list.append(target_qubit)
-    circuit.append(gate, qubits_list)
-    
-    for i in range(8):
-        if ciphertext[i] == '0':
-            circuit.x(plaintext_qubits[i])
-    
-    circuit = inverse_sdes(circuit, plaintext_qubits, key_qubits)
-    
-    return circuit
-
-def diffusion(circuit, key_qubits):
-    for qubit in key_qubits:
-        circuit.h(qubit)
-    
-    for qubit in key_qubits:
-        circuit.x(qubit)
-    
-    circuit.h(key_qubits[-1])
-    
-    gate = MCXGate(9)
-    control_qubits = [key_qubits[i] for i in range(9)]
-    target = key_qubits[9]
-    circuit.append(gate, control_qubits + [target])
-    
-    circuit.h(key_qubits[-1])
-    
-    for qubit in key_qubits:
-        circuit.x(qubit)
-    
-    for qubit in key_qubits:
-        circuit.h(qubit)
-    
-    return circuit
-
-def grover_sdes(plaintext_value, ciphertext_value, iterations=2):
-    plaintext_binary = format(plaintext_value, '08b')
-    ciphertext_binary = format(ciphertext_value, '08b')
-    
-    plaintext = QuantumRegister(8, 'pt')
-    key = QuantumRegister(10, 'key')
-    target = QuantumRegister(1, 'target')
-    cr = ClassicalRegister(10, 'cr')
-    circuit = QuantumCircuit(plaintext, key, target, cr)
-    
-    for i in range(8):
-        if plaintext_binary[i] == '1':
-            circuit.x(plaintext[i])
-    
-    for qubit in key:
-        circuit.h(qubit)
-    
-    circuit.x(target)
-    circuit.h(target)
-    
-    for _ in range(iterations):
-        circuit = oracle_function(circuit, plaintext, key, target[0], ciphertext_binary)
-        circuit = diffusion(circuit, key)
-    
-    circuit.measure(key, cr)
-    
-    return circuit
-
-def run_grover(plaintext_val, ciphertext_val, iterations=2, shots=1024):
-    plaintext_binary = format(plaintext_val, '08b')
-    ciphertext_binary = format(ciphertext_val, '08b')
-    
-    circuit = grover_sdes(plaintext_val, ciphertext_val, iterations)
-    print(circuit.draw())
-    
-    simulator = AerSimulator()
-    job = simulator.run(circuit, shots=shots)
-    result = job.result()
-    counts = result.get_counts()
-    
-    sorted_counts = dict(sorted(counts.items(), key=lambda x: x[1], reverse=True))
-    
-    plt.figure(figsize=(12, 6))
-    plot_histogram(sorted_counts, title=f'Grover Results: Iterations={iterations}, Plaintext={plaintext_binary}, Ciphertext={ciphertext_binary}')
-    plt.tight_layout()
-    plt.savefig(f'grover_results_iter{iterations}.png')
-    plt.show()
-    
-    top_key = max(counts, key=counts.get)
-    
-    print(f"Plaintext: {plaintext_binary}")
-    print(f"Ciphertext: {ciphertext_binary}")
-    print(f"Most likely key: {top_key} with {counts[top_key]} counts ({counts[top_key]/shots*100:.2f}%)")
-    
-    return counts
-
-def test_sdes_grover():
-    plaintext_val = 0b01010100
-    ciphertext_val = 0b11100111
-    
-    print("Running Grover's algorithm with 1 iteration:")
-    counts1 = run_grover(plaintext_val, ciphertext_val, iterations=1, shots=1024)
+    print("\nResults:")
+    print(f"Plaintext:  {bits_to_str(plaintext)}")
+    print(f"Key:        {bits_to_str(key)}")
+    print(f"Ciphertext: {bits_to_str(ciphertext)}")
+    print(f"Decrypted:  {bits_to_str(decrypted)}")
 
 if __name__ == "__main__":
-    test_sdes_grover()
+    main()
